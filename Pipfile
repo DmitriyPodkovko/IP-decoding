@@ -5,8 +5,9 @@ name = "pypi"
 
 [packages]
 requests = "*"
-numpy = "*"
 pandas = "*"
+python3-nmap = "*"
+numpy = "*"
 
 [dev-packages]
 

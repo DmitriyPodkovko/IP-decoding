@@ -1,4 +1,5 @@
 # Decoding the organization's IP address from csv using ipinfo
+import nmap3
 from sys import exit
 from pandas import read_csv
 from sqlite3 import connect
@@ -6,7 +7,7 @@ from requests import get
 from numpy import nan
 from datetime import datetime, timedelta
 from const.constants import (IPINFO_URL, ITERATOR_TOKENS,
-                             IN_FILE, SEPARATOR,
+                             IN_FILE, SEPARATOR, NMAP,
                              OUT_FILE_ALL_IP, OUT_FILE_UKR_IP,
                              OUT_FILE_UKR_MOBILE_IP,
                              DB_NAME, LIMIT_DAY, QUERIES as q)
@@ -41,11 +42,50 @@ def get_response(url, ip_address, token):
         print(f'Request execution error: {url + ip_address + token} ({str(e_req)})')
 
 
+def get_cpe(list_cpe, count_cpe):
+    result = ''
+    for i in range(count_cpe):
+        result = (f"{result}"
+                  f"{list_cpe[i].get('cpe')} ")
+    return result
+
+
+def get_nmap(ip_address):
+    try:
+        result = ''
+        nmap = nmap3.Nmap()
+        response = nmap.nmap_version_detection(ip_address)
+        if ip_address in response:
+            cnt_ports = len(response.get(ip_address).get('ports')) if 'ports' in response.get(ip_address) else 0
+            for i in range(cnt_ports):
+                result = (f"{result}"
+                          f"{response.get(ip_address).get('ports')[i].get('portid') if 'portid' in response.get(ip_address).get('ports')[i] else ''}/"
+                          f"{response.get(ip_address).get('ports')[i].get('protocol') + ' ' if 'protocol' in response.get(ip_address).get('ports')[i] else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('state') + ' ' if 'state' in response.get(ip_address).get('ports')[i] else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('name') + ' ' if 'name' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('product') + ' ' if 'product' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('version') + ' ' if 'version' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('hostname') + ' ' if 'hostname' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('devicetype') + ' ' if 'devicetype' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('ostype') + ' ' if 'ostype' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('extrainfo') + ' ' if 'extrainfo' in response.get(ip_address).get('ports')[i].get('service') else ''}" 
+                          f"{response.get(ip_address).get('ports')[i].get('service').get('tunnel') + ' ' if 'tunnel' in response.get(ip_address).get('ports')[i].get('service') else ''}"
+                          f"{get_cpe(response.get(ip_address).get('ports')[i].get('cpe'), len(response.get(ip_address).get('ports')[i].get('cpe'))) if 'cpe' in response.get(ip_address).get('ports')[i] and len(response.get(ip_address).get('ports')[i].get('cpe')) > 0 else ''}"
+                          f"\n")
+        print(f'Nmap {ip_address}:\n{result}')
+        return result
+    except Exception as e_nmap:
+        print(f'Nmap execution error: {ip_address} ({str(e_nmap)})')
+
+
 def handler(input_file, delimiter, url, token, output_file_all_ip, output_file_ukr_ip, output_file_ukr_mobile_ip):
     try:
         df = read_csv(input_file, delimiter=delimiter, index_col='ID')
         ip_list = list(df.get('IP Address'.strip()))
         result_list = []
+        if NMAP == 1:
+            nmap_list = []
+            nmap_dict = {}
         count_resp_db = 0
         count_resp_ipinfo = 0
         count_insert_db = 0
@@ -88,13 +128,26 @@ def handler(input_file, delimiter, url, token, output_file_all_ip, output_file_u
                                     whois = row[2]
                                     result_list.append(whois)
                                     count_resp_db += 1
+                            if NMAP == 1:
+                                if ip_list[ip] in nmap_dict:
+                                    nmap_list.append(nmap_dict.get(ip_list[ip]))
+                                else:
+                                    ip_nmap = get_nmap(ip_list[ip])
+                                    nmap_dict[ip_list[ip]] = ip_nmap
+                                    nmap_list.append(ip_nmap)
                         else:  # value of ip_list[ip] is empty
                             result_list.append('')
+                            if NMAP == 1:
+                                nmap_list.append('')
                     else:  # value of ip_list[ip] is nan
                         result_list.append('')
+                        if NMAP == 1:
+                            nmap_list.append('')
         except Exception as e_db:
             print(f'DB error: {str(e_db)}')
         df.insert(11, 'Organisation', result_list)
+        if NMAP == 1:
+            df.insert(12, 'Nmap', nmap_list)
         # -sig is necessary so that the Cyrillic alphabet does not move out and not on Apple (Windows, Android)
         df.to_csv(output_file_all_ip, sep=delimiter, index=True, header=True, encoding='utf-8-sig')
         df_ukr_ip = df[(df['Organisation'].str.contains('UA'))]
